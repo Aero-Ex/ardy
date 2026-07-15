@@ -242,6 +242,8 @@ class CachedTextEncoder:
                 f"{len(texts) - already_cached} encoded, "
                 f"{already_cached} already cached."
             )
+            from ardy.model.memory_manager import manager as memory_manager
+            memory_manager.purge_encoder_completely()
         except Exception as e:
             print(f"[text-embedding cache] Prewarm failed (non-fatal): {e!r}")
 

@@ -187,6 +187,10 @@ class GenerationMixin:
             print(f"Model not loaded for client {client_id}!")
             return
 
+        from ardy.model.memory_manager import manager as memory_manager
+        if hasattr(session, "model_name") and session.model_name:
+            memory_manager.touch_and_move(session.model_name, self.device)
+
         start_time = time.time()
 
         history_motion_tensor, history_start_idx, history_end_idx, history_length = self._get_history_motion(session)
@@ -405,3 +409,7 @@ class GenerationMixin:
 
         end_time = time.time()
         print(f"Generate step time: {end_time - start_time} seconds")
+
+        # Purge text encoder to free System RAM/VRAM
+        from ardy.model.memory_manager import manager as memory_manager
+        memory_manager.purge_encoder_completely()

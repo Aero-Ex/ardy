@@ -103,6 +103,7 @@ class ModelLoadingMixin:
 
         # Update session with new model and attributes
         session.model = model
+        session.model_name = model_name
         session.motion_rep = model.motion_rep
         # create motion_rep_infer from motion_rep
         # Detect skeleton type from loaded model
@@ -252,10 +253,16 @@ class ModelLoadingMixin:
                         export_denoiser_onnx(model.denoiser, model_cfg, denoiser_onnx, num_tokens=max_tok)
                         export_decoder_onnx(model.autoencoder, decoder_onnx, num_tokens=max_tok)
 
+                        from ardy.model.memory_manager import manager as memory_manager
+                        memory_manager.purge_encoder_completely()
+                        memory_manager.offload_model(model_name)
+
                         _progress(f"Building TensorRT engines ({'fp16' if fp16 else 'fp32'}, max tokens {max_tok})...")
                         build_trt_engine(denoiser_onnx, denoiser_trt_path, max_tokens=max_tok, fp16=fp16)
                         build_trt_engine(decoder_onnx, decoder_trt_path, max_tokens=max_tok, fp16=fp16)
                         print("TRT engines built.")
+
+                        memory_manager.touch_and_move(model_name, self.device)
 
                     from ardy.model.trt import (
                         TRTAutoencoder,

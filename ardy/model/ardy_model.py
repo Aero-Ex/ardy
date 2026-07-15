@@ -318,6 +318,10 @@ class Ardy(nn.Module):
         device = self.device
         log.info("Encoding text...")
         text_feat, text_length = self.text_encoder(texts)
+        from ardy.model.memory_manager import manager as memory_manager
+        name = next((k for k, v in memory_manager.models.items() if v is self), None)
+        if name:
+            memory_manager.touch_and_move(name, device)
         text_feat = text_feat.to(device)
 
         # handle empty string (set to zero)

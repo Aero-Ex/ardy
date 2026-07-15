@@ -11,7 +11,13 @@ ARDY is an autoregressive diffusion model designed for interactive motion genera
 This repo provides code, checkpoints, and demos to work with the pre-trained ARDY models introduced in the [SIGGRAPH paper](https://research.nvidia.com/labs/sil/projects/ardy/).
 
 ## Setup
-> This repo has mainly been tested on Ubuntu Linux 22.04 with RTX 4090, nvidia-driver-575, and Python 3.11.
+
+### Low-VRAM Support (6GB+ VRAM)
+
+* **Designed for low-VRAM systems:** Enables ARDY to run on consumer GPUs with 6GB or more of VRAM.
+* **Tested hardware:** Verified on an RTX 4050 (make sure to use the latest NVIDIA drivers for TensorRT compatibility).
+* **Auto-downloading Text Encoder:** Utilizes the lightweight NF4-quantized version of the text encoder, which is downloaded automatically on its first run.
+
 
 In a fresh Python 3.10+ environment (conda or venv), first install a build of **PyTorch** (>= 2.4) that matches your machine's CUDA, then install ARDY in editable mode with all optional features:
 
@@ -37,24 +43,6 @@ pip install -e ".[all]"
 
 </details>
 
-### Set up Hugging Face token for text encoder
-
-The text encoder relies on the gated [meta-llama/Meta-Llama-3-8B-Instruct](https://huggingface.co/meta-llama/Meta-Llama-3-8B-Instruct) model, which requires:
-
-- Your Hugging Face account has been granted access to the model page.
-- You provide a Hugging Face token at runtime.
-
-After you receive access to the Llama repo, create an access token in [Hugging Face token settings](https://huggingface.co/settings/tokens), then either log in on the command line:
-
-```bash
-hf auth login
-```
-
-or paste the token in `~/.cache/huggingface/token`. If you do not have `hf` installed, install it first:
-
-```bash
-pip install --upgrade huggingface_hub
-```
 
 ### Checkpoints
 
@@ -72,22 +60,6 @@ ARDY checkpoints are available trained on various skeletons with differing FPS a
 
 **Coming soon!** We are working to train a version of ARDY on Rigplay 1 with the [SOMA body model](https://github.com/NVlabs/SOMA-X) skeleton.
 
-### [Optional] Dataset
-
-Downloading data is only required for running the kinematically constrained generation demos.
-
-**Bones SEED motion data**:
-The kinematically constrained generation demo samples constraints from motion sequences in the [Bones SEED](https://huggingface.co/datasets/bones-studio/seed) dataset. The motion data are provided in CSV format for G1. Corresponding text descriptions are retrieved from the metadata CSV during sampling.
-
-Please download the Bones SEED dataset and put them under the `datasets/bones-seed/` directory in the root of the repo. The directory structure should be as follows:
-```
-datasets/bones-seed/
-  g1/csv/
-  metadata/
-    seed_metadata_v004.csv
-```
-
----
 
 ## Interactive Demo
 
@@ -103,11 +75,11 @@ We provide an interactive demo that enables real-time humanoid character control
 ```bash
 python scripts/run_demo.py
 ```
-
-If you plan to be frequently re-launching the demo, it can be helpful to launch the text encoder API service in the background. This way, the demo will not need to instantiate the text encoder every time it is launched. In a separate terminal, run:
+> or 
 ```bash
-python scripts/run_text_encoder_server.py
+python scripts/run_demo.py --offload
 ```
+
 
 ### Quick Start
 - **Open the UI**: In your browser, go to `http://localhost:2333`. You can use Left-drag to rotate, Right-drag to pan, and Scroll to zoom to control the camera with mouse.
@@ -253,17 +225,7 @@ Most useful flags:
 | `--constraints` | Path to a saved kinematic-constraint list. |
 | `--no-postprocess` | Don't apply motion post-processing to reduce foot skating and hit constraints. |
 
-> Tip: if you generate repeatedly, start the standalone text-encoder service in the background first (`python scripts/run_text_encoder_server.py`) so each run connects to it instead of loading the LLM2Vec model in-process every time.
 
----
-
-## Related Humanoid Work at NVIDIA
-ARDY is closely related to several works from NVIDIA on humanoid motion and control:
-* [Kimodo](https://github.com/nv-tlabs/kimodo) - human motion generation model specializing in controllable _offline_ motion authoring.
-* [MotionBricks](https://nvlabs.github.io/motionbricks/) - real-time motion generation framework that specializes in fast and robust motion in-betweening.
-* [GEAR SONIC](https://github.com/NVlabs/GR00T-WholeBodyControl) - humanoid behavior foundation model for physical robots. ARDY can be used as a planner to generate motions given to SONIC.
-
----
 
 ## Citation
 

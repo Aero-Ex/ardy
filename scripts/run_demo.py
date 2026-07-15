@@ -139,7 +139,15 @@ def main() -> None:
         action="store_true",
         help="Do not compile the model (initial backend is 'None' instead of 'ONNX-TRT (fp16)').",
     )
+    parser.add_argument(
+        "--offload",
+        action="store_true",
+        help="Enable multi-tier memory offloading (Disk-RAM-VRAM) for low-memory GPUs.",
+    )
     args = parser.parse_args()
+
+    from ardy.model.memory_manager import manager as memory_manager
+    memory_manager.offload_enabled = args.offload
 
     demo = InteractiveTimelineDemo(compile_model=not args.no_compile)
     demo.run()

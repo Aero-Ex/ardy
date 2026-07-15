@@ -2,15 +2,18 @@
 # SPDX-License-Identifier: Apache-2.0
 """LLM2Vec encoder wrapper for ARDY text conditioning."""
 
+import gc
+import platform
 import os
 
 import numpy as np
 import torch
+from torch import nn
 
 from .llm2vec import LLM2Vec
 
 
-class LLM2VecEncoder:
+class LLM2VecEncoder(nn.Module):
     """LLM2Vec text embeddings."""
 
     def __init__(
@@ -21,21 +24,9 @@ class LLM2VecEncoder:
         llm_dim: int,
         device: str = "auto",
     ) -> None:
-        torch_dtype = getattr(torch, dtype)
+        super().__init__()
+        self.torch_dtype = getattr(torch, dtype) if isinstance(dtype, str) else dtype
         self.llm_dim = llm_dim
-
-        cache_dir = os.environ.get("HUGGINGFACE_CACHE_DIR")
-
-        if "TEXT_ENCODERS_DIR" in os.environ:
-            base_model_name_or_path = os.path.join(os.environ["TEXT_ENCODERS_DIR"], base_model_name_or_path)
-            peft_model_name_or_path = os.path.join(os.environ["TEXT_ENCODERS_DIR"], peft_model_name_or_path)
-
-        self.model = LLM2Vec.from_pretrained(
-            base_model_name_or_path=base_model_name_or_path,
-            peft_model_name_or_path=peft_model_name_or_path,
-            torch_dtype=torch_dtype,
-            cache_dir=cache_dir,
-        )
 
         env_device = os.environ.get("TEXT_ENCODER_DEVICE")
         if env_device:
@@ -43,49 +34,125 @@ class LLM2VecEncoder:
         if device == "auto":
             device = "cuda" if torch.cuda.is_available() else "cpu"
         self._device = device
-        if device is not None:
-            self.model = self.model.to(device)
 
-        self.model.eval()
-        for p in self.model.parameters():
-            p.requires_grad = False
+        custom_path = r"/home/aero/kimodo-venv/llm2vec-model"
+        if os.path.exists(custom_path):
+            self.custom_dir = custom_path
+        else:
+            root_path = os.path.abspath(os.path.join(__file__, os.pardir, os.pardir, os.pardir, os.pardir))
+            self.custom_dir = os.path.abspath(os.path.join(root_path, "models", "KIMODO-Meta3_llm2vec_NF4"))
+            if not os.path.exists(self.custom_dir):
+                # Fall back to Hugging Face repo ID
+                self.custom_dir = "Aero-Ex/KIMODO-Meta3_llm2vec_NF4"
 
-    def to(self, device: torch.device | str | None = None, dtype: torch.dtype | None = None):
-        if device is not None and dtype is not None:
-            self.model = self.model.to(device=device, dtype=dtype)
-        elif device is not None:
-            self.model = self.model.to(device)
-        elif dtype is not None:
-            self.model = self.model.to(dtype=dtype)
+        print(f"[LLM2VecEncoder] Initializing model from {self.custom_dir}...")
+        print(f"[LLM2VecEncoder] Initialized (Waiting for first use to load weights)...")
+        self.model = None
+
+    def to(self, device=None, dtype=None):
+        if dtype is not None:
+            self.torch_dtype = dtype
         if device is not None:
             self._device = str(device) if not isinstance(device, str) else device
+        if self.model is not None:
+            self.model.to(device=device, dtype=dtype)
         return self
 
-    def eval(self):
-        self.model.eval()
-        return self
+    def unload(self):
+        """Offload the model weights to System RAM (CPU) if currently on GPU."""
+        if self.model is not None:
+            if self.get_device().type == "cuda":
+                print(f"[LLM2VecEncoder] Offloading 5.4GB model to System RAM...")
+                self.model.model.to("cpu")
+                gc.collect()
+                if platform.system() == "Linux":
+                    try:
+                        import ctypes
+                        ctypes.CDLL("libc.so.6").malloc_trim(0)
+                    except Exception:
+                        pass
+                elif platform.system() == "Windows":
+                    from ardy.model.memory_manager import release_system_memory
+                    release_system_memory()
+
+                if torch.cuda.is_available():
+                    torch.cuda.empty_cache()
+                    torch.cuda.ipc_collect()
+                if torch.backends.mps.is_available():
+                    torch.mps.empty_cache()
+
+    def reload(self):
+        """Move from System RAM to VRAM."""
+        if self.model is None:
+            print(f"[LLM2VecEncoder] Model was None. Reloading from disk (15s delay)...")
+            self.model = LLM2Vec.from_pretrained(
+                base_model_name_or_path=self.custom_dir,
+                peft_model_name_or_path=None,
+                torch_dtype=self.torch_dtype,
+                device_map="cpu"
+            )
+
+        from ardy.model.memory_manager import manager
+        # Need ~5.4GB of VRAM
+        manager.ensure_vram_capacity(5400 * 1024 * 1024, device=self._device, exclude_name="text_encoder")
+
+        curr_device = self.get_device()
+        if curr_device.type != "cuda":
+            if torch.backends.mps.is_available():
+                print(f"[LLM2VecEncoder] Moving weights to GPU (mps)...")
+                self.model.model.to("mps")
+            else:
+                print(f"[LLM2VecEncoder] Moving weights to GPU ({self._device})...")
+                self.model.model.to(self._device)
+            
+            gc.collect()
+            
+            if platform.system() == "Linux":
+                try:
+                    import ctypes
+                    ctypes.CDLL("libc.so.6").malloc_trim(0)
+                except Exception:
+                    pass
+            elif platform.system() == "Windows":
+                from ardy.model.memory_manager import release_system_memory
+                release_system_memory()
+
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+                torch.cuda.ipc_collect()
+            if torch.backends.mps.is_available():
+                torch.mps.empty_cache()
+            
+            manager.log_memory_usage("Encoder Transfer Complete (RAM Reclaimed)")
+        else:
+            print(f"[LLM2VecEncoder] Model already on GPU ({curr_device})")
 
     def get_device(self):
-        return self.model.model.device
+        if self.model is None:
+            return torch.device("cpu")
+        for p in self.model.model.parameters():
+            if p.device.type != "meta":
+                return p.device
+        return torch.device("cpu")
+
+    def delete(self):
+        """Reclaim RAM without deleting from disk unless absolutely necessary."""
+        self.unload()
 
     def __call__(self, text: list[str] | str):
+        self.reload() # Auto-reload if called
         is_string = False
         if isinstance(text, str):
             text = [text]
             is_string = True
 
-        with torch.no_grad():
-            encoded_text = self.model.encode(
-                text,
-                # IMPORTANT: different batch sizes unexpectedly change the output embeddings, so we always set it to 1
-                #            here for repeatability no matter how many texts are being encoded. This
-                #            is a fundamental issue with transformers, and is especially bad at lower
-                #            precisions (https://github.com/huggingface/transformers/issues/25420#issuecomment-1775317535)
-                #            note: this is an internal batch size used by llm2vec - the text list can still be of arbitrary length.
-                batch_size=1,
-                show_progress_bar=False,
-                device=self._device,
-            )
+        results = []
+        for t in text:
+            with torch.no_grad():
+                emb = self.model.encode([t])
+                results.append(emb)
+
+        encoded_text = np.concatenate(results, axis=0)
 
         assert len(encoded_text.shape)
         assert self.llm_dim == encoded_text.shape[-1]
@@ -97,5 +164,12 @@ class LLM2VecEncoder:
             encoded_text = encoded_text[0]
             lengths = lengths[0]
 
-        encoded_text = torch.tensor(encoded_text).to(self._device)
+        encoded_text = torch.tensor(encoded_text).to(self.get_device())
+
+        # Automatically unload the model from GPU to free VRAM for diffusion/denoising
+        from ardy.model.memory_manager import manager
+        if manager.offload_enabled:
+            print("[LLM2VecEncoder] Auto-offloading after encode call...")
+            self.unload()
+
         return encoded_text, lengths

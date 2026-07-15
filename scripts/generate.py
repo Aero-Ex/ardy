@@ -100,6 +100,11 @@ def parse_args():
         default=None,
         help="Local dir holding released model folders. Falls back to the CHECKPOINTS_DIR env var; if neither is set the model is downloaded from Hugging Face.",
     )
+    parser.add_argument(
+        "--offload",
+        action="store_true",
+        help="Enable multi-tier memory offloading (Disk-RAM-VRAM) for low-memory GPUs.",
+    )
     return parser.parse_args()
 
 
@@ -169,6 +174,10 @@ def main():
     print(f"Using device: {device}")
 
     args = parse_args()
+
+    # Configure offloading flag on memory manager
+    from ardy.model.memory_manager import manager as memory_manager
+    memory_manager.offload_enabled = args.offload
 
     if args.num_samples < 1:
         raise ValueError(f"--num_samples must be >= 1, got {args.num_samples}.")
@@ -249,6 +258,9 @@ def main():
         )
 
     with torch.no_grad():
+        from ardy.model.memory_manager import manager as memory_manager
+        memory_manager.touch_and_move(resolved_model, device)
+
         motion = model(
             texts,
             num_frames,

@@ -329,6 +329,7 @@ class TRTAutoencoder(nn.Module):
         super().__init__()
         self._trt_decoder = trt_decoder
         self._autoencoder = autoencoder
+        self.add_module("autoencoder_submodule", autoencoder)
         # The decoder graph emits one output per detokenize() dict key; recover
         # those keys (in order) so detokenize() below returns the same dict the
         # PyTorch autoencoder does.

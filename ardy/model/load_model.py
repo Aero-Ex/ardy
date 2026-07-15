@@ -248,6 +248,9 @@ def load_model(
     model = instantiate_from_dict(model_cfg, overrides={"device": device})
     if text_encoder is not None:
         model.text_encoder = text_encoder
+        from ardy.model.memory_manager import manager as memory_manager
+        memory_manager.register_model(modelname or full_name, model)
+        memory_manager.register_encoder(text_encoder)
 
     if eval_mode:
         model = model.eval()

@@ -254,8 +254,11 @@ class GuiModelMixin:
                     if event.client:
                         if success:
                             session = self.client_sessions[client_id]
+                            session.model_name = _chosen["model"]
                             text_feat, _ = session.model.text_encoder([g.gui_prompt_text.value])
                             session.text_embedding = text_feat.to(self.device)
+                            from ardy.model.memory_manager import manager as memory_manager
+                            memory_manager.purge_encoder_completely()
                             session.gui_elements.gui_active_prompt_label.content = (
                                 f"**Active Prompt:** {g.gui_prompt_text.value}"
                             )
