@@ -28,6 +28,7 @@ conda activate ardy
 # For example:
 pip install torch torchvision --index-url https://download.pytorch.org/whl/cu126
 pip install -e ".[all]"
+pip install bitsandbytes
 ```
 
 <details>

@@ -35,15 +35,15 @@ class LLM2VecEncoder(nn.Module):
             device = "cuda" if torch.cuda.is_available() else "cpu"
         self._device = device
 
-        custom_path = r"/home/aero/kimodo-venv/llm2vec-model"
+        custom_path = os.path.expanduser("~/llm2vec-model")
         if os.path.exists(custom_path):
             self.custom_dir = custom_path
         else:
-            root_path = os.path.abspath(os.path.join(__file__, os.pardir, os.pardir, os.pardir, os.pardir))
-            self.custom_dir = os.path.abspath(os.path.join(root_path, "models", "KIMODO-Meta3_llm2vec_NF4"))
-            if not os.path.exists(self.custom_dir):
-                # Fall back to Hugging Face repo ID
-                self.custom_dir = "Aero-Ex/KIMODO-Meta3_llm2vec_NF4"
+                root_path = os.path.abspath(os.path.join(__file__, os.pardir, os.pardir, os.pardir, os.pardir))
+                self.custom_dir = os.path.abspath(os.path.join(root_path, "models", "KIMODO-Meta3_llm2vec_NF4"))
+                if not os.path.exists(self.custom_dir):
+                    # Fall back to Hugging Face repo ID
+                    self.custom_dir = "Aero-Ex/KIMODO-Meta3_llm2vec_NF4"
 
         print(f"[LLM2VecEncoder] Initializing model from {self.custom_dir}...")
         print(f"[LLM2VecEncoder] Initialized (Waiting for first use to load weights)...")
@@ -84,13 +84,13 @@ class LLM2VecEncoder(nn.Module):
     def reload(self):
         """Move from System RAM to VRAM."""
         if self.model is None:
-            print(f"[LLM2VecEncoder] Model was None. Reloading from disk (15s delay)...")
             self.model = LLM2Vec.from_pretrained(
                 base_model_name_or_path=self.custom_dir,
                 peft_model_name_or_path=None,
                 torch_dtype=self.torch_dtype,
                 device_map="cpu"
             )
+            self.model.model.config._name_or_path = "McGill-NLP/LLM2Vec-Meta-Llama-3-8B-Instruct-mntp"
 
         from ardy.model.memory_manager import manager
         # Need ~5.4GB of VRAM

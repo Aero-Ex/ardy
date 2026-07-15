@@ -34,21 +34,13 @@ class TRTEngine:
         if trt is None:
             raise ImportError("tensorrt is required for TRT inference. Install with: pip install tensorrt")
         self.logger = trt.Logger(trt.Logger.WARNING)
-        engine_path = str(engine_path)
-        log.info("Loading TRT engine from %s", engine_path)
-        with open(engine_path, "rb") as f:
-            runtime = trt.Runtime(self.logger)
-            self.engine = runtime.deserialize_cuda_engine(f.read())
-        if self.engine is None:
-            raise RuntimeError(
-                f"Failed to deserialize TRT engine: {engine_path}\n"
-                f"The engine was built with a different TensorRT version. "
-                f"Rebuild it with the currently installed version "
-                f"({trt.__version__}) by running scripts/export_onnx.py."
-            )
-        self.context = self.engine.create_execution_context()
+        self.engine_path = str(engine_path)
+        self.engine = None
+        self.context = None
 
-        # Catalogue bindings and their static shapes
+        # Load engine once to catalogue bindings and their static shapes
+        self.reload()
+
         self.input_names = []
         self.output_names = []
         self.binding_dtypes = {}
@@ -72,6 +64,38 @@ class TRTEngine:
             ", ".join(self.output_names),
         )
 
+    def unload(self) -> None:
+        """Release the TensorRT context and engine from GPU VRAM."""
+        if hasattr(self, "context") and self.context is not None:
+            log.info("Unloading TRT context from VRAM: %s", self.engine_path)
+            del self.context
+            self.context = None
+        if hasattr(self, "engine") and self.engine is not None:
+            log.info("Unloading TRT engine from VRAM: %s", self.engine_path)
+            del self.engine
+            self.engine = None
+        import gc
+        gc.collect()
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+
+    def reload(self) -> None:
+        """Reload the TensorRT engine from disk into VRAM if not already loaded."""
+        if getattr(self, "engine", None) is not None:
+            return
+        log.info("Reloading TRT engine from %s", self.engine_path)
+        with open(self.engine_path, "rb") as f:
+            runtime = trt.Runtime(self.logger)
+            self.engine = runtime.deserialize_cuda_engine(f.read())
+        if self.engine is None:
+            raise RuntimeError(
+                f"Failed to deserialize TRT engine: {self.engine_path}\n"
+                f"The engine was built with a different TensorRT version. "
+                f"Rebuild it with the currently installed version "
+                f"({trt.__version__}) by running scripts/export_onnx.py."
+            )
+        self.context = self.engine.create_execution_context()
+
     def infer(
         self,
         output_shapes: Optional[Dict[str, Tuple[int, ...]]] = None,
@@ -91,6 +115,7 @@ class TRTEngine:
         Returns:
             Dictionary mapping output tensor names to GPU tensors.
         """
+        self.reload()
         if stream is None:
             stream = torch.cuda.current_stream()
         output_shapes = output_shapes or {}
@@ -172,6 +197,15 @@ class TRTCFGDenoiser(nn.Module):
         self._motion_rep_dim = denoiser.motion_rep.motion_rep_dim
         # Expose model attribute so denoising_step can access backbone dims
         self.model = denoiser
+
+    def to(self, device, *args, **kwargs):
+        super().to(device, *args, **kwargs)
+        device_str = str(device)
+        if "cpu" in device_str:
+            self._engine.unload()
+        elif "cuda" in device_str:
+            self._engine.reload()
+        return self
 
     def __getattr__(self, name: str):
         try:
@@ -298,6 +332,15 @@ class TRTDecoder(nn.Module):
         self._num_tokens = num_tokens
         self._num_frames = num_tokens * num_frames_per_token
 
+    def to(self, device, *args, **kwargs):
+        super().to(device, *args, **kwargs)
+        device_str = str(device)
+        if "cpu" in device_str:
+            self._engine.unload()
+        elif "cuda" in device_str:
+            self._engine.reload()
+        return self
+
     def forward(
         self,
         latent_tokens: torch.Tensor,
@@ -330,6 +373,7 @@ class TRTAutoencoder(nn.Module):
         self._trt_decoder = trt_decoder
         self._autoencoder = autoencoder
         self.add_module("autoencoder_submodule", autoencoder)
+        self.add_module("trt_decoder_submodule", trt_decoder)
         # The decoder graph emits one output per detokenize() dict key; recover
         # those keys (in order) so detokenize() below returns the same dict the
         # PyTorch autoencoder does.
